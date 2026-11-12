@@ -1,0 +1,112 @@
+# Tier map. Copy to .review-tiers.toml at the repository root and edit.
+#
+# It is always read from the branch a change targets, never from the change itself,
+# and this file is itself high risk, so a change cannot lower its own tier.
+#
+# Rule patterns are relative to the repository root, with forward slashes:
+#   *        matches inside one path segment        src/*.py
+#   ?        matches one character of a segment     v?.txt
+#   **/      matches zero or more directories       **/migrations/**
+#   dir/**   matches everything under dir           infra/**
+# Everything else is literal and there is no negation. When several rules match a
+# file the stricter tier wins, and a change takes the highest tier among its files.
+#
+# Always high, whatever this file says: CI configuration (.github/workflows/**,
+# .github/actions/**, .gitlab-ci.yml, .gitlab/**), any CODEOWNERS, any REVIEW.md,
+# and this file.
+
+version = 1
+
+# "recommend": post a review guide saying how risky the change is and where to look.
+#              Never approves or merges. Use this where a person must approve.
+# "auto":      also merge changes that are low risk, reviewed clean and green, and
+#              hold everything else for a person. GitHub only in this version.
+mode = "recommend"
+
+# Tier for files no rule matches. Keep it at "medium" so that new or unlisted code
+# gets a person by default and "low" has to be earned by a rule.
+default_tier = "medium"
+
+# --- High: read first. Start with the paths where a one-line change can hurt.
+# `area` names the part of the system and `check` tells the reviewer what to look
+# for; both appear in the review guide next to each matching file.
+
+[[rules]]
+tier = "high"
+area = "Schema migrations"
+check = "Is it backward compatible with the version now running, and can it be rolled back?"
+paths = ["**/migrations/**"]
+
+[[rules]]
+tier = "high"
+area = "Sign-in and permissions"
+check = "Who can now do something they could not before?"
+paths = ["**/auth/**"]
+
+[[rules]]
+tier = "high"
+area = "Infrastructure and deployment"
+check = "What does this change in production, and how is it undone?"
+paths = ["infra/**", "deploy/**", "**/Dockerfile", "docker-compose*.yml"]
+
+[[rules]]
+tier = "high"
+area = "Secrets and environment"
+check = "Could a secret end up in the repository, a log or an image?"
+paths = ["**/.env*"]
+
+# --- Medium: only needed for paths a low rule below would otherwise catch.
+
+[[rules]]
+tier = "medium"
+area = "Agent instructions"
+check = "These steer every agent that reads them."
+paths = ["**/CLAUDE.md", "**/AGENTS.md", ".claude/**"]
+
+# --- Low: skim. Low risk means a mistake here cannot reach users, not "a small
+# diff". Tests are deliberately not listed: weakening a test so that a change
+# passes is something a person should see.
+
+[[rules]]
+tier = "low"
+area = "Documentation"
+paths = ["docs/**", "**/*.md"]
+
+# Human reviewers each tier calls for. Must not decrease from low to high.
+[reviewers]
+low = 0
+medium = 1
+high = 2
+
+[limits]
+# A low-risk change larger than this is raised to medium. Remove a line to drop it.
+max_low_changed_lines = 300
+max_low_changed_files = 15
+# Review rounds before a change counts as looping (reported by `replay`).
+max_review_rounds = 3
+
+[authors]
+# Logins allowed the no-person path in auto mode. Empty means nobody.
+trusted = []
+# Accounts whose reviews never count as a person's. Accounts the host marks as bots
+# never count either. A change opened by an agent also needs a person assigned.
+agents = []
+
+[labels]
+# Tier labels default to risk:low / risk:medium / risk:high on GitHub and to the
+# scoped risk::low / risk::medium / risk::high on GitLab. Set names here to override.
+# Anyone can add this label to ask for a person on a low-risk change. "" disables it.
+force_human = "needs-human"
+
+[post]
+comment = true
+# If the token may not change labels, they are skipped and the comment still posts.
+labels = true
+
+[auto]
+# Used only when mode = "auto".
+merge_method = "squash"   # merge, squash or rebase
+# Who is assigned and mentioned when a change is held.
+notify = []
+# Checks not to wait for, such as the job that runs this tool.
+ignore_checks = []

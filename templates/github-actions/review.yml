@@ -1,0 +1,85 @@
+# Review on every ready pull request: classify, have an agent review it, publish the
+# guide and, in auto mode, merge or hold.
+#
+# STATUS: a starting point that has not been run end to end. Try it on a test
+# repository first, and read the notes below.
+#
+# Setup
+#   - Copy to .github/workflows/review.yml, with .review-tiers.toml on the default branch.
+#   - Add the secret CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) to run on a
+#     Claude subscription, or swap in `anthropic_api_key` for an API key.
+#   - Replace OWNER/review-tiers and pin `ref` to a commit you have read.
+#
+# Notes
+#   - The job is named "Review" and publish is told to ignore a check of that name, so
+#     it does not wait for itself. Rename both together.
+#   - A merge made with the workflow's own token does not start other workflows. If a
+#     deploy runs on push to the default branch, it will not run for these merges
+#     unless you pass a different token to the publish step.
+#   - On `pull_request`, this file is read from the pull request. The tier map is not:
+#     it always comes from the target branch, and workflow files are always high risk.
+#     Without branch protection that is a convention, not a lock.
+#   - Each run uses Actions minutes, and up to 10 more while waiting for other checks.
+name: Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions: {}
+
+concurrency:
+  group: review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Review
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write        # merge in auto mode
+      pull-requests: write   # the guide comment and the merge
+      issues: write          # labels and assignees
+      checks: read
+      statuses: read
+      id-token: write        # used by the Claude Code action
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PYTHONPATH: ${{ github.workspace }}/.review-tiers-tool
+      CHANGE: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/checkout@v6
+        with:
+          repository: OWNER/review-tiers
+          ref: main
+          path: .review-tiers-tool
+
+      - name: Brief
+        run: |
+          python3 -m review_tiers brief --host github --repo "$GITHUB_REPOSITORY" \
+            --change "$CHANGE" > "$RUNNER_TEMP/brief.json"
+
+      - name: Agent review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Follow the instructions in .review-tiers-tool/prompts/triage.md.
+            The brief is at ${{ runner.temp }}/brief.json.
+            The change is the diff between origin/${{ github.base_ref }} and HEAD.
+            Write the JSON result to ${{ runner.temp }}/review.json and nothing else.
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+
+      - name: Publish
+        run: |
+          python3 -m review_tiers publish --host github --repo "$GITHUB_REPOSITORY" \
+            --change "$CHANGE" --review "$RUNNER_TEMP/review.json" \
+            --wait 600 --ignore-check Review
